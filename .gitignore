@@ -1,0 +1,10 @@
+__pycache__
+__init__.py
+testdata
+package-lock.json
+package.json
+.env
+.pytest_cache
+reports
+fixtures
+    
