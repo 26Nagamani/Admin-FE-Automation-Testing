@@ -1,3 +1,6 @@
+from pathlib import Path
+# import shutil
+
 import pytest
 from playwright.sync_api import sync_playwright
 
@@ -6,8 +9,20 @@ from pages.login_page import LoginPage
 from utils.excel_reader import read_excel
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    setattr(item, f"rep_{call.when}", outcome.get_result())
+
+
 @pytest.fixture
-def page():
+def page(request):
+
+    screenshot_dir = Path("reports/screenshots")
+    # video_dir = Path("reports/videos")
+    screenshot_dir.mkdir(parents=True, exist_ok=True)
+    # video_dir.mkdir(parents=True, exist_ok=True)
+    test_name = request.node.name.replace("/", "_").replace("\\", "_")
 
     with sync_playwright() as p:
 
@@ -15,11 +30,35 @@ def page():
             headless=HEADLESS
         )
 
-        page = browser.new_page()
+        context = browser.new_context()
+        # context = browser.new_context(
+        #     record_video_dir=str(video_dir)
+        # )
 
-        yield page
+        page = context.new_page()
 
-        browser.close()
+        try:
+            yield page
+
+        finally:
+            if getattr(request.node, "rep_call", None) and request.node.rep_call.failed:
+                page.screenshot(
+                    path=str(screenshot_dir / f"{test_name}.png"),
+                    full_page=True
+                )
+
+            # video = page.video
+            context.close()
+
+            # if video:
+            #     video_path = Path(video.path())
+            #     if video_path.exists():
+            #         shutil.move(
+            #             str(video_path),
+            #             str(video_dir / f"{test_name}.webm")
+            #         )
+
+            browser.close()
 
 
 @pytest.fixture
@@ -27,7 +66,6 @@ def logged_in_page(page):
 
     login_page = LoginPage(page)
 
-    # Read login data from Excel
     login_data = read_excel(
         "test_data/LoginData.xlsx",
         "Sheet1"
