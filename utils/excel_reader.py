@@ -1,7 +1,15 @@
 from openpyxl import load_workbook
+import warnings
 
 def read_excel(file_path, sheet_name):
-    workbook = load_workbook(file_path)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Workbook contains no default style, apply openpyxl's default",
+            category=UserWarning,
+            module="openpyxl.styles.stylesheet",
+        )
+        workbook = load_workbook(file_path)
     sheet = workbook[sheet_name]
 
     data = []
