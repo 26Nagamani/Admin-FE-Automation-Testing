@@ -1,6 +1,6 @@
 import time
 
-from pages.login_page import LoginPage
+from pages.login.login_page import LoginPage
 from utils.excel_reader import read_excel
 from utils.excel_service import ExcelService
 from config.config import BASE_URL

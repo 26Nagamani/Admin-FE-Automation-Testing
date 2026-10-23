@@ -5,8 +5,12 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from config.config import BASE_URL, BROWSER, HEADLESS
-from pages.login_page import LoginPage
+from pages.login.login_page import LoginPage
 from utils.excel_reader import read_excel
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LOGIN_DATA_FILE = REPO_ROOT / "test_data" / "LoginData.xlsx"
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -68,7 +72,7 @@ def logged_in_page(page):
 
     # Read login data from Excel
     login_data = read_excel(
-        "test_data/LoginData.xlsx",
+        str(LOGIN_DATA_FILE),
         "Sheet1"
     )[0]
 

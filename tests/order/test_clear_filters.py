@@ -1,6 +1,6 @@
 import time
 
-from pages.reports_filter_page import ReportsFilterPage
+from pages.order.reports_filter_page import ReportsFilterPage
 from utils.excel_reader import read_excel
 from utils.excel_service import ExcelService
 
@@ -11,7 +11,7 @@ filter_data = read_excel(
 )
 
 
-def test_set_filters(logged_in_page):
+def test_clear_filters(logged_in_page):
 
     page = logged_in_page
     filter_page = ReportsFilterPage(page)
@@ -39,31 +39,20 @@ def test_set_filters(logged_in_page):
                 product=row["Product"]
             )
 
-            # Validate text fields
+            print("✓ Filters Applied")
 
-            assert (
-                filter_page.get_order_code()
-                == row["OrderCode"]
-            )
+            filter_page.clear_filters()
 
-            assert (
-                filter_page.get_phone_number()
-                == str(row["PhoneNumber"])
-            )
+            print("✓ Clear Filters Clicked")
 
-            assert (
-                filter_page.get_from_date()
-                == row["FromDate"]
-            )
-
-            assert (
-                filter_page.get_to_date()
-                == row["ToDate"]
-            )
+            assert filter_page.get_order_code() == ""
+            assert filter_page.get_phone_number() == ""
+            assert filter_page.get_from_date() == ""
+            assert filter_page.get_to_date() == ""
 
             result = "PASS"
 
-            print("✓ Filters Applied Successfully")
+            print("✓ Filters Cleared Successfully")
 
         except Exception as e:
 
@@ -75,7 +64,7 @@ def test_set_filters(logged_in_page):
 
             ExcelService.write_result(
                 module_name="Reports",
-                test_id="TC001",
+                test_id="TC002",
                 data_test_id=row["OrderCode"],
                 result=result,
                 error_message=error_message,
@@ -85,4 +74,4 @@ def test_set_filters(logged_in_page):
                 )
             )
 
-            print(f"TC001 : {result}")
+            print(f"TC002 : {result}")

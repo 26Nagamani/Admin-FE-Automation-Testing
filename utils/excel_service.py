@@ -1,4 +1,5 @@
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from datetime import datetime
 import os
 import json
@@ -14,6 +15,8 @@ class ExcelService:
         "Module Name",
         "Data Test ID",
         "Result",
+        "Matched Fields",
+        "Matched Documents",
         "Error Message",
         "Backend URL Hit",
         "API Response",
@@ -73,6 +76,62 @@ class ExcelService:
         return existing_headers
 
     @staticmethod
+    def _format_report(sheet, headers, target_row=None):
+        header_fill = PatternFill("solid", fgColor="1F4E78")
+        pass_fill = PatternFill("solid", fgColor="C6EFCE")
+        fail_fill = PatternFill("solid", fgColor="FFC7CE")
+        pass_font = Font(color="006100", bold=True)
+        fail_font = Font(color="9C0006", bold=True)
+
+        for cell in sheet[1]:
+            cell.fill = header_fill
+            cell.font = Font(color="FFFFFF", bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        widths = {
+            "Test ID": 16,
+            "Module Name": 20,
+            "Data Test ID": 28,
+            "Result": 12,
+            "Matched Fields": 30,
+            "Matched Documents": 34,
+            "Error Message": 45,
+            "Backend URL Hit": 55,
+            "API Response": 70,
+            "Duration": 12,
+            "Payload": 40,
+            "Screenshot Path": 38,
+            "Execution Time": 22,
+        }
+        for column_index, header in enumerate(headers, start=1):
+            sheet.column_dimensions[sheet.cell(1, column_index).column_letter].width = widths.get(
+                header, 20
+            )
+
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        sheet.row_dimensions[1].height = 30
+
+        if target_row is None:
+            return
+
+        sheet.row_dimensions[target_row].height = 72
+        for cell in sheet[target_row]:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+        result_column = headers.index("Result") + 1
+        result_cell = sheet.cell(target_row, result_column)
+        result_cell.alignment = Alignment(horizontal="center", vertical="center")
+        if str(result_cell.value).upper() == "PASS":
+            for cell in sheet[target_row]:
+                cell.fill = pass_fill
+            result_cell.font = pass_font
+        elif str(result_cell.value).upper() == "FAIL":
+            for cell in sheet[target_row]:
+                cell.fill = fail_fill
+            result_cell.font = fail_font
+
+    @staticmethod
     def clear_module_results(module_name):
         current_date = datetime.now().strftime("%Y-%m-%d")
         module_folder = os.path.join(
@@ -91,6 +150,8 @@ class ExcelService:
         for column_index, header in enumerate(ExcelService.RESULT_HEADERS, start=1):
             sheet.cell(row=1, column=column_index).value = header
 
+        ExcelService._format_report(sheet, ExcelService.RESULT_HEADERS)
+
         print(f"[ExcelService] Clearing previous results: {excel_file}")
         workbook.save(excel_file)
         print("[ExcelService] Previous results cleared")
@@ -104,6 +165,8 @@ class ExcelService:
         error_message="",
         backend_url="",
         api_response="",
+        matched_fields="",
+        matched_documents="",
         duration="",
         payload="",
         screenshot_path="",
@@ -149,6 +212,8 @@ class ExcelService:
             "Module Name": module_name,
             "Data Test ID": data_test_id,
             "Result": result,
+            "Matched Fields": matched_fields,
+            "Matched Documents": matched_documents,
             "Error Message": error_message,
             "Backend URL Hit": backend_url,
             "API Response": api_response,
@@ -163,6 +228,8 @@ class ExcelService:
         target_row = ExcelService._find_result_row(sheet, headers, test_id, data_test_id)
         for column_index, header in enumerate(headers, start=1):
             sheet.cell(row=target_row, column=column_index).value = row_values.get(header, "")
+
+        ExcelService._format_report(sheet, headers, target_row)
 
         print(f"[ExcelService] Saving to: {excel_file}")
         workbook.save(excel_file)

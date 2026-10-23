@@ -1,177 +1,237 @@
 import time
+from datetime import datetime
+from pathlib import Path
 from random import choices
 from string import ascii_lowercase, digits
 
 from utils.excel_reader import read_excel
 from utils.excel_service import ExcelService
-from workflows.partner.create_partner_workflow import CreatePartnerWorkflow
-from workflows.partner.partner_markup_workflow import PartnerMarkupWorkflow
-from workflows.partner.partner_paths import ADD_PARTNER_DATA_FILE
 from workflows.partner.partner_requirements import get_partner_requirements
-from workflows.partner.review_partner_workflow import ReviewPartnerWorkflow
+from workflows.partner.onbording_partner_workflow import (
+    ADD_PARTNER_DATA_FILE,
+    OnboardingPartnerWorkflow,
+)
+
+PARTNER_DOCS_DIR = ADD_PARTNER_DATA_FILE.parent / "docs"
 
 
-partner_data = read_excel(str(ADD_PARTNER_DATA_FILE), "AddPartnerData")
+def generated_email():
+    suffix = "".join(choices(ascii_lowercase + digits, k=6))
+    return f"{suffix}@gmail.com"
 
 
-def slug(value):
-    return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+def capture_failure_screenshot(page, partner_type, row_index):
+    safe_partner_type = "".join(
+        character if character.isalnum() else "_"
+        for character in str(partner_type or f"row_{row_index}").lower()
+    ).strip("_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    screenshot_path = Path("reports/screenshots") / (
+        f"test_add_partner_{safe_partner_type}_{timestamp}.png"
+    )
+    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(screenshot_path), full_page=True)
+    return str(screenshot_path)
 
 
-def generate_partner_email(partner_type, test_case):
-    partner_slug = slug(partner_type) or "partner"
-    test_slug = slug(test_case) or "tc"
-    random_suffix = "".join(choices(ascii_lowercase + digits, k=6))
-    return f"{random_suffix}@gmail.com"
+def form_responses(captures):
+    responses = []
+    for capture in captures:
+        for response in capture.get("responses", []):
+            url = response.get("url", "")
+            method = response.get("method", "")
+            if method not in {"POST", "PUT", "PATCH"}:
+                continue
+            if "/admin-agents/agents/" in url or "/upload-document/" in url:
+                responses.append(response)
+    return responses
 
 
-def failure_screenshot_path():
-    return "reports/screenshots/test_add_partner.png"
+def report_backend_urls(captures):
+    urls = [response["url"] for response in form_responses(captures)]
+    urls.extend(
+        capture["backend_url"]
+        for capture in captures
+        if not capture.get("responses") and capture.get("backend_url")
+    )
+    return "\n\n".join(urls)
 
 
-def capture_backend_responses(page):
-    captured = []
-
-    def handle_response(response):
-        if "localhost:5173" in response.url or "/api/" not in response.url:
-            return
-
-        item = {
-            "method": response.request.method,
-            "status": response.status,
-            "url": response.url,
-            "body": "",
-        }
-        try:
-            item["body"] = str(response.json())[:500]
-        except Exception:
-            item["body"] = "Could not parse response"
-        captured.append(item)
-
-    page.on("response", handle_response)
-    return captured, handle_response
+def report_api_responses(captures):
+    responses = [
+        f"{response['method']} {response['status']}\n"
+        f"{response['url']}\n"
+        f"{response.get('body', '')}"
+        for response in form_responses(captures)
+    ]
+    responses.extend(
+        capture["api_response"]
+        for capture in captures
+        if not capture.get("responses") and capture.get("api_response")
+    )
+    return "\n\n".join(responses)
 
 
-def format_backend_urls(responses):
-    return " | ".join(response["url"] for response in responses)
-
-
-def format_api_responses(responses):
-    return " | ".join(
-        f"{response['method']} {response['status']} {response['url']} => {response['body']}"
-        for response in responses
+def verification_required(data):
+    value = str(data.get("verification_required") or "").strip().lower()
+    if value in {"y", "yes", "true", "1"}:
+        return True
+    if value in {"n", "no", "false", "0"}:
+        return False
+    raise AssertionError(
+        "Excel field 'verification_required' must be Y or N "
+        f"for partner type: {data.get('partner_type')}"
     )
 
 
-def approve_partner_with_retry(page, partner_workflow, review_workflow, data):
-    review_workflow.open_created_pending_partner(data)
-    approve_captured = review_workflow.approve_open_partner()
+def verify_partner_details(add_partner_page, data):
+    requirements = get_partner_requirements(
+        data["partner_type"],
+        data.get("referral_source"),
+    )
+    if not requirements:
+        raise AssertionError(
+            f"No requirements configured for partner type: {data['partner_type']}"
+        )
 
-    approval_errors = approve_captured.get("approval_errors") or []
-    if not approval_errors:
-        print("✓ partner approved")
-        return approve_captured
-
-    print(f"⚠ approval prerequisites found: {approval_errors}")
-    review_workflow.edit_open_partner_after_approval_errors()
-    partner_workflow.complete_partner_details(data)
-    partner_workflow.upload_required_documents()
-
-    review_workflow.open_created_pending_partner(data)
-    retry_captured = review_workflow.approve_open_partner()
-    retry_errors = retry_captured.get("approval_errors") or []
-    if retry_errors:
-        raise Exception(f"Approval prerequisite errors after edit retry: {retry_errors}")
-
-    print("✓ partner approved after edit retry")
-    return retry_captured
+    add_partner_page.fill_partner_details(data)
+    add_partner_page.verify_required_fields(requirements["fields"])
+    print(f"✓ required fields verified for {data['partner_type']}")
+    return requirements
 
 
-def run_markup_after_approval(data, review_workflow, markup_workflow):
-    try:
-        review_workflow.open_approved_partner_markup(data)
-        markup_workflow.verify_set_markup_modal()
-        markup_workflow.verify_charges_tab()
-        print("✓ markup opened from approved partner table")
-    except Exception as table_markup_error:
-        print(f"⚠ approved table markup path failed, using markup page fallback: {table_markup_error}")
-        markup_workflow.open_markup_for_partner(data)
-        markup_workflow.verify_set_markup_modal()
-        markup_workflow.verify_charges_tab()
-        print("✓ markup test completed through markup page")
+def complete_all_verifications(page, add_partner_page):
+    verification_actions = (
+        ("PAN", add_partner_page.verify_pan),
+        ("bank", add_partner_page.verify_bank),
+        ("GST", add_partner_page.verify_gst),
+    )
+    for label, action in verification_actions:
+        action()
+        add_partner_page.handle_name_mismatch("yes")
+        page.wait_for_timeout(3000)
+        print(f"✓ {label} verification requested")
+
+
+def verify_all_verifications_are_pending(add_partner_page):
+    for verification_name in ("pan", "bank", "gst"):
+        add_partner_page.verify_verification_is_pending(verification_name)
+    print("✓ PAN, bank and GST verification left pending")
+
+
+def partner_document_files():
+    if not PARTNER_DOCS_DIR.exists():
+        raise AssertionError(
+            f"Partner document directory does not exist: {PARTNER_DOCS_DIR}"
+        )
+    files = [
+        path
+        for path in PARTNER_DOCS_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in {".pdf", ".jpg", ".jpeg", ".png"}
+    ]
+    if not files:
+        raise AssertionError(f"No partner documents found in: {PARTNER_DOCS_DIR}")
+    return files
+
+
+def upload_required_documents(add_partner_page):
+    uploaded_documents = add_partner_page.upload_configured_documents(
+        partner_document_files()
+    )
+    captured = add_partner_page.click_upload(
+        expected_upload_count=len(uploaded_documents)
+    )
+    upload_responses = [
+        response
+        for response in captured.get("responses", [])
+        if "/upload-document/" in response.get("url", "")
+    ]
+    if len(upload_responses) < len(uploaded_documents):
+        raise AssertionError(
+            "Document save did not complete: "
+            f"expected {len(uploaded_documents)} upload responses, "
+            f"captured {len(upload_responses)}"
+        )
+    failed_uploads = [
+        response
+        for response in upload_responses
+        if not 200 <= int(response.get("status", 0)) < 300
+    ]
+    if failed_uploads:
+        raise AssertionError(f"Document upload API failed: {failed_uploads}")
+    return captured, uploaded_documents
 
 
 def test_add_partner(logged_in_page):
-
-    page = logged_in_page
-    partner_workflow = CreatePartnerWorkflow(page)
-    review_workflow = ReviewPartnerWorkflow(page)
-    markup_workflow = PartnerMarkupWorkflow(page)
-
+    partner_data = read_excel(str(ADD_PARTNER_DATA_FILE), "AddPartnerData")
     failures = []
-    document_key_log = {}
     ExcelService.clear_module_results("AddPartner")
 
-    for index, data in enumerate(partner_data, start=1):
-        if data.get("Execute") and str(data["Execute"]).upper() != "Y":
+    for index, source_data in enumerate(partner_data, start=1):
+        if source_data.get("Execute") and str(source_data["Execute"]).upper() != "Y":
             continue
 
-        row_start_time = time.time()
-        row_result = "FAIL"
-        row_error_message = ""
-        row_responses, response_listener = capture_backend_responses(page)
+        data = dict(source_data)
+        if not str(data.get("email") or "").strip():
+            data["email"] = generated_email()
+
+        started_at = time.time()
+        result = "FAIL"
+        error_message = ""
+        captures = []
+        matched_fields = ""
+        matched_documents = ""
+        screenshot_path = ""
 
         try:
-            data = dict(data)
-            if not str(data.get("email") or "").strip():
-                test_case = data.get("TestCaseID") or data.get("Test ID") or f"row{index}"
-                data["email"] = generate_partner_email(data.get("partner_type"), test_case)
-                print(f"✓ generated email for {data.get('partner_type')} row {index}: {data['email']}")
+            workflow = OnboardingPartnerWorkflow(logged_in_page)
+            workflow.open_add_partner_form()
+            add_partner_page = workflow.add_partner_page
+            requirements = verify_partner_details(add_partner_page, data)
+            matched_fields = "\n".join(requirements["fields"])
 
-            print(f"✓ using partner type row {index}: {data}")
-            requirements = get_partner_requirements(data["partner_type"])
-            document_key_log[data["partner_type"]] = requirements["documents"] if requirements else []
+            if verification_required(data):
+                complete_all_verifications(logged_in_page, add_partner_page)
+            else:
+                verify_all_verifications_are_pending(add_partner_page)
 
-            partner_workflow.open_add_partner_form()
-            partner_workflow.complete_partner_details(data)
-            partner_workflow.upload_required_documents()
-            approve_partner_with_retry(page, partner_workflow, review_workflow, data)
-            run_markup_after_approval(data, review_workflow, markup_workflow)
-            row_result = "PASS"
-
-        except Exception as e:
-            row_error_message = f"{data.get('partner_type', f'row {index}')}: {e}"
-            failures.append(row_error_message)
-            print(f"TC003 Error: {row_error_message}")
-
-        finally:
-            page.remove_listener("response", response_listener)
-            row_duration = round(time.time() - row_start_time, 2)
-            row_backend_urls = format_backend_urls(row_responses)
-            row_api_responses = format_api_responses(row_responses)
+            captures.append(workflow.create_partner_and_assert_created())
+            add_partner_page.verify_required_documents(requirements["documents"])
+            matched_documents = "\n".join(requirements["documents"])
+            print(f"✓ required documents verified for {data['partner_type']}")
+            upload_capture, uploaded_documents = upload_required_documents(add_partner_page)
+            captures.append(upload_capture)
+            matched_documents = "\n".join(uploaded_documents)
+            approval_result = workflow.approve_partner(data)
+            captures.extend(approval_result["captures"])
+            captures.append(workflow.apply_partner_markup(data))
+            result = "PASS"
+        except Exception as exc:
+            error_message = f"{data.get('partner_type', f'row {index}')}: {exc}"
+            failures.append(error_message)
             try:
-                ExcelService.write_result(
-                    module_name="AddPartner",
-                    test_id=data.get("TestCaseID") or data.get("Test ID") or f"TC003-{index}",
-                    data_test_id=data.get("partner_type", f"row-{index}"),
-                    result=row_result,
-                    error_message=row_error_message,
-                    backend_url=row_backend_urls,
-                    api_response=row_api_responses,
-                    duration=row_duration,
+                screenshot_path = capture_failure_screenshot(
+                    logged_in_page,
+                    data.get("partner_type"),
+                    index,
                 )
-                print(f"✓ output Excel report updated for {data.get('partner_type')}: {row_result}")
-            except Exception as excel_err:
-                print(f"Output Excel report update failed for {data.get('partner_type')}: {excel_err}")
-
-    result = "FAIL" if failures else "PASS"
-    error_message = " | ".join(failures)
-
-    print("📄 overall document upload docKeys by partner type")
-    for partner_type, document_keys in document_key_log.items():
-        print(f"📄 {partner_type}: {document_keys}")
-
-    print(f"TC003 : {result}")
+                print(f"✓ failure screenshot captured: {screenshot_path}")
+            except Exception as screenshot_error:
+                print(f"✗ failure screenshot capture failed: {screenshot_error}")
+        finally:
+            ExcelService.write_result(
+                module_name="AddPartner",
+                test_id=data.get("TestCaseID") or data.get("Test ID") or f"row-{index}",
+                data_test_id=data.get("partner_type", f"row-{index}"),
+                result=result,
+                error_message=error_message,
+                backend_url=report_backend_urls(captures),
+                api_response=report_api_responses(captures),
+                matched_fields=matched_fields,
+                matched_documents=matched_documents,
+                screenshot_path=screenshot_path,
+                duration=round(time.time() - started_at, 2),
+            )
 
     if failures:
-        raise AssertionError(error_message)
+        raise AssertionError(" | ".join(failures))

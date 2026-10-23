@@ -5,7 +5,7 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from config.config import BASE_URL, BROWSER, HEADLESS
-from pages.login_page import LoginPage
+from pages.login.login_page import LoginPage
 from utils.excel_reader import read_excel
 
 

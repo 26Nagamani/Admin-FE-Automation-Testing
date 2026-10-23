@@ -15,8 +15,11 @@ class PartnerDetailsPage:
             "backend_url": "",
             "payload": "",
             "api_response": "",
+            "approval_check_response": {},
             "approved": False,
             "approval_errors": [],
+            "approval_error_fields": {},
+            "approval_documents": [],
         }
 
         def handle_request(request):
@@ -28,21 +31,41 @@ class PartnerDetailsPage:
                     captured["payload"] = ""
 
         def handle_response(response):
-            if "verify" in response.url or "approve" in response.url:
+            if "/approval-check/" in response.url:
                 try:
-                    captured["api_response"] = str(response.json())[:500]
+                    body = response.json()
+                    captured["backend_url"] = response.url
+                    captured["api_response"] = str(body)
+                    captured["approval_check_response"] = body
+                    captured["approval_error_fields"] = body.get("errors") or {}
+                    captured["approval_documents"] = body.get("documents") or []
+                    captured["approval_errors"] = list(
+                        captured["approval_error_fields"].values()
+                    )
+                except Exception:
+                    captured["api_response"] = "Could not parse response"
+            elif "verify" in response.url or "approve" in response.url:
+                try:
+                    captured["backend_url"] = response.url
+                    body = str(response.json())
+                    captured["api_response"] = " | ".join(
+                        value for value in (captured["api_response"], body) if value
+                    )
                 except Exception:
                     captured["api_response"] = "Could not parse response"
 
         self.page.on("request", handle_request)
         self.page.on("response", handle_response)
+        handle_dialog = lambda dialog: dialog.accept()
+        self.page.on("dialog", handle_dialog)
 
         try:
-            self.page.once("dialog", lambda dialog: dialog.accept())
             self.page.get_by_test_id("approve-btn").wait_for(state="visible", timeout=5000)
             self.page.get_by_test_id("approve-btn").click()
 
             for _ in range(60):
+                if captured["approval_error_fields"]:
+                    return captured
                 errors = self.get_approval_errors()
                 if errors:
                     captured["approval_errors"] = errors
@@ -63,6 +86,7 @@ class PartnerDetailsPage:
         finally:
             self.page.remove_listener("request", handle_request)
             self.page.remove_listener("response", handle_response)
+            self.page.remove_listener("dialog", handle_dialog)
 
         return captured
 

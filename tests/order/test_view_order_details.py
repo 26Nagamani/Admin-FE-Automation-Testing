@@ -1,7 +1,7 @@
 import time
 
-from pages.report_list_page import ReportsListPage
-from pages.order_details_page import OrderDetailsPage
+from pages.order.order_details_page import OrderDetailsPage
+from pages.order.report_list_page import ReportsListPage
 from utils.excel_service import ExcelService
 
 

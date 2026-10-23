@@ -1,3 +1,5 @@
+import time
+
 from playwright.sync_api import Page
 from config.config import BASE_URL
 
@@ -15,7 +17,8 @@ class PartnerListPage:
         captured = {
             "backend_url": "",
             "payload": "",
-            "api_response": ""
+            "api_response": "",
+            "responses": [],
         }
 
         def handle_response(response):
@@ -27,9 +30,21 @@ class PartnerListPage:
                 captured["backend_url"] = response.url
 
                 try:
-                    captured["api_response"] = str(response.json())[:500]
+                    body = str(response.json())[:500]
                 except Exception:
-                    captured["api_response"] = "Could not parse response"
+                    body = "Could not parse response"
+
+                captured["responses"].append({
+                    "method": response.request.method,
+                    "status": response.status,
+                    "url": response.url,
+                    "body": body,
+                })
+                captured["backend_url"] = " | ".join(item["url"] for item in captured["responses"])
+                captured["api_response"] = " | ".join(
+                    f"{item['method']} {item['status']} {item['url']} => {item['body']}"
+                    for item in captured["responses"]
+                )
 
         self.page.on("response", handle_response)
 
@@ -39,6 +54,47 @@ class PartnerListPage:
         print(f"After navigate URL: {self.page.url}")
 
         self.page.remove_listener("response", handle_response)
+
+        return captured
+
+    def navigate_pending_and_capture_api(self):
+        captured = {
+            "backend_url": "",
+            "payload": "",
+            "api_response": "",
+            "responses": [],
+        }
+
+        def handle_response(response):
+            if (
+                ("partners-v1" in response.url or "/partners" in response.url)
+                and "localhost:5173" not in response.url
+                and response.status == 200
+            ):
+                try:
+                    body = str(response.json())[:500]
+                except Exception:
+                    body = "Could not parse response"
+
+                captured["responses"].append({
+                    "method": response.request.method,
+                    "status": response.status,
+                    "url": response.url,
+                    "body": body,
+                })
+                captured["backend_url"] = " | ".join(item["url"] for item in captured["responses"])
+                captured["api_response"] = " | ".join(
+                    f"{item['method']} {item['status']} {item['url']} => {item['body']}"
+                    for item in captured["responses"]
+                )
+
+        self.page.on("response", handle_response)
+        try:
+            self.navigate()
+            print(f"After navigate URL: {self.page.url}")
+            self.click_pending_tab()
+        finally:
+            self.page.remove_listener("response", handle_response)
 
         return captured
 
@@ -67,6 +123,7 @@ class PartnerListPage:
         )
         self.page.get_by_test_id("tab-pending").click()
         self.page.wait_for_load_state("networkidle")
+        self.wait_for_pending_partners_to_load()
 
     def search_by(self, filter_label: str, value: str):
         self.page.locator("label[for='agent-filter-by']").click()
@@ -108,6 +165,14 @@ class PartnerListPage:
         print(f"✓ pending partner opened | search={searched_value} | agent_code={agent_code}")
         return agent_code
 
+    def open_pending_partner_by_agent_code(self, agent_code):
+        self.navigate()
+        self.click_pending_tab()
+        self.search_by("Partner Code", agent_code)
+        self.click_view_details(agent_code)
+        print(f"✓ pending partner reopened | agent_code={agent_code}")
+        return agent_code
+
     def open_approved_partner_markup(self, data):
         self.navigate()
         self.click_approved_tab()
@@ -120,6 +185,18 @@ class PartnerListPage:
         self.page.wait_for_load_state("networkidle")
         print(f"✓ approved partner markup opened | search={searched_value}")
 
+    def open_first_partner_without_markup(self):
+        self.navigate()
+        self.click_approved_tab()
+        apply_links = self.page.locator('[data-testid^="apply-markup-"]')
+        apply_links.first.wait_for(state="visible", timeout=15000)
+        test_id = apply_links.first.get_attribute("data-testid") or ""
+        agent_id = test_id.replace("apply-markup-", "")
+        apply_links.first.click()
+        self.page.wait_for_load_state("networkidle")
+        print(f"✓ opened approved partner without markup | agent_id={agent_id}")
+        return agent_id
+
     def get_pending_count(self) -> int:
         text = (
             self.page.get_by_test_id("tab-pending")
@@ -128,6 +205,27 @@ class PartnerListPage:
             .strip()
         )
         return int(text) if text.isdigit() else 0
+
+    def wait_for_pending_partners_to_load(self, timeout=30000):
+        deadline = time.monotonic() + (timeout / 1000)
+        last_count = 0
+
+        while time.monotonic() < deadline:
+            self.page.wait_for_load_state("networkidle")
+            row_count = self.page.locator('[data-testid^="view-details-"]').count()
+            pending_count = self.get_pending_count()
+            last_count = pending_count
+
+            if row_count > 0 or pending_count > 0:
+                return pending_count
+
+            self.page.wait_for_timeout(1000)
+
+        print(f"⚠ pending partners did not appear within {timeout}ms | pending count: {last_count}")
+        return last_count
+
+    def has_pending_partner_rows(self):
+        return self.page.locator('[data-testid^="view-details-"]').count() > 0
 
     def click_add_partner(self):
         self.page.get_by_test_id("add-partner-partner-btn").wait_for(

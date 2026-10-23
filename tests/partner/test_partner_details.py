@@ -1,13 +1,15 @@
 import time
+from pages.partner.partner_details_page import PartnerDetailsPage
+from pages.partner.partner_list_page import PartnerListPage
 from utils.excel_service import ExcelService
-from workflows.partner.review_partner_workflow import ReviewPartnerWorkflow
 
 
 def test_partner_details(logged_in_page):
 
     page = logged_in_page
     print(f"\n current url after login: {page.url}")
-    partner_workflow = ReviewPartnerWorkflow(page)
+    list_page = PartnerListPage(page)
+    details_page = PartnerDetailsPage(page)
     start_time = time.time()
     result, error_message = "FAIL", ""
     api_captured = {
@@ -18,12 +20,14 @@ def test_partner_details(logged_in_page):
     
 
     try:
-        api_captured = partner_workflow.open_pending_partner_details()
+        api_captured = list_page.navigate_pending_and_capture_api()
+        list_page.open_partner_details_from_current_results()
+        details_page.verify_modal_open()
+        details_page.verify_documents_section()
 
-        # View details verified — PASS regardless of approve step
+        # View details verified only. Approval is covered by test_partner_approval.py.
         result = "PASS"
-
-        api_captured = partner_workflow.approve_if_available(api_captured)
+        details_page.close_modal()
 
     except Exception as e:
         error_message = str(e)

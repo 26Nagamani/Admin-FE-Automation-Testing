@@ -2,11 +2,20 @@ def normalize_partner_type(value: str) -> str:
     return " ".join(str(value or "").strip().lower().replace("_", " ").split())
 
 
+def normalize_referral_source(value: str) -> str:
+    normalized = "".join(
+        character if character.isalnum() else " "
+        for character in str(value or "").lower()
+    )
+    return " ".join(normalized.split())
+
+
 COMMON_FIELD_ALIASES = {
     "account_holder_name": "account_holder_name",
     "pan_number": "pan_number",
     "phone_number": "phone_number",
-    "registered_mobile": "phone_number",
+    "registered_mobile (Bank)": "registered_mobile",
+    "registered_mobile": "registered_mobile",
     "address": "address",
     "gst_number": "gst_number",
     "buisness_name": "buisness_name",
@@ -15,6 +24,8 @@ COMMON_FIELD_ALIASES = {
     "ifsc": "ifsc_code",
     "bank_account_number": "bank_account_number",
     "cin_llpin": "cin_llpin",
+    "referral_employee_id": "referral_employee_id",
+    "referral_employee_email_id": "referral_employee_email_id",
 }
 
 DOCUMENT_FILE_ALIASES = {
@@ -205,9 +216,34 @@ PARTNER_TYPE_REQUIREMENTS = {
 }
 
 
-def get_partner_requirements(partner_type: str):
+REFERRAL_SOURCE_REQUIREMENTS = {
+    "internal sales team": {
+        "fields": [
+            "referral_employee_id",
+            "referral_employee_email_id",
+        ],
+        "documents": [],
+    },
+}
+
+
+def get_partner_requirements(partner_type: str, referral_source: str = ""):
     normalized = normalize_partner_type(partner_type)
-    return PARTNER_TYPE_REQUIREMENTS.get(normalized)
+    partner_requirements = PARTNER_TYPE_REQUIREMENTS.get(normalized)
+    if not partner_requirements:
+        return None
+
+    requirements = {
+        "fields": list(partner_requirements["fields"]),
+        "documents": list(partner_requirements["documents"]),
+    }
+    referral_requirements = REFERRAL_SOURCE_REQUIREMENTS.get(
+        normalize_referral_source(referral_source)
+    )
+    if referral_requirements:
+        requirements["fields"].extend(referral_requirements["fields"])
+        requirements["documents"].extend(referral_requirements["documents"])
+    return requirements
 
 
 def document_key(value: str) -> str:

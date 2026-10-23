@@ -1,6 +1,6 @@
 import time
-from pages.reports_page import ReportsListPage
-from pages.edit_order_page import EditOrderPage
+from pages.order.edit_order_page import EditOrderPage
+from pages.order.reports_page import ReportsListPage
 from utils.excel_reader import read_excel
 from utils.excel_service import ExcelService
 
